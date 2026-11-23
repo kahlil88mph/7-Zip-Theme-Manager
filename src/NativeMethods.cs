@@ -12,6 +12,7 @@ namespace SevenZipThemeManager
     {
         public const int RT_BITMAP = 2;
         public const int RT_ICON = 3;
+        public const int RT_STRING = 6;
         public const int RT_GROUP_ICON = 14;
 
         public const uint MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
@@ -32,6 +33,12 @@ namespace SevenZipThemeManager
 
         [DllImport("kernel32.dll")]
         public static extern bool AttachConsole(int processId);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
+
+        [DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr icon);
 
         [DllImport("shell32.dll")]
         public static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);

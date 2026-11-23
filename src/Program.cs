@@ -15,12 +15,14 @@ namespace SevenZipThemeManager
     internal static class Program
     {
         public const string Title = "7-Zip Theme Manager";
+        public const string Version = "4.0";
 
         private const string Usage =
-            "Usage: 7zThemeManager.exe [--7zip <folder>] [--themes <folder>]\r\n" +
-            "                          [--filetype <theme>] [--toolbar <theme>] [--restore]\r\n" +
+            Title + " " + Version + "\r\n\r\n" +
+            "Usage: 7zTM.exe [--7zip <folder>] [--filetype <theme>] [--toolbar <theme>] [--icons <theme>] [--restore]\r\n" +
             "\r\n" +
-            "With no options the window opens. <theme> is a theme's folder name or its name in theme.ini.\r\n" +
+            "With no options the window opens. Themes are read from the FileType, ToolBar and Icons folders\r\n" +
+            "next to this program. <theme> is a theme's folder name or its name in theme.ini.\r\n" +
             "--restore puts back the 7-Zip files saved before the first change.";
 
         [STAThread]
@@ -83,7 +85,7 @@ namespace SevenZipThemeManager
                 return output.ToString();
             }
 
-            string themesRoot = options.ThemesFolder ?? Settings.ThemesFolder ?? ThemeStore.FindThemesRoot(Application.StartupPath);
+            string themesRoot = ThemeStore.Root;
             if (options.FileType != null)
             {
                 Theme theme = FindTheme(themesRoot, ThemeKind.FileType, options.FileType);
@@ -94,22 +96,27 @@ namespace SevenZipThemeManager
                 Theme theme = FindTheme(themesRoot, ThemeKind.Toolbar, options.Toolbar);
                 output.AppendLine(Patcher.ApplyToolbar(sevenZip, theme).Summary("Toolbar \"" + theme.Name + "\""));
             }
+            if (options.Icons != null)
+            {
+                Theme theme = FindTheme(themesRoot, ThemeKind.Icons, options.Icons);
+                output.AppendLine(Patcher.ApplyIcons(sevenZip, theme).Summary("Program icons \"" + theme.Name + "\""));
+            }
             if (output.Length == 0)
-                output.AppendLine("Nothing to do. Pass --filetype, --toolbar or --restore.");
+                output.AppendLine("Nothing to do. Pass --filetype, --toolbar, --icons or --restore.");
             return output.ToString();
         }
 
         private static Theme FindTheme(string themesRoot, ThemeKind kind, string wanted)
         {
-            if (string.IsNullOrEmpty(themesRoot) || !ThemeStore.LooksLikeThemesRoot(themesRoot))
-                throw new InvalidOperationException("The themes folder was not found. Pass the folder that holds FileType and ToolBar with --themes.");
+            if (!ThemeStore.LooksLikeThemesRoot(themesRoot))
+                throw new InvalidOperationException("No FileType, ToolBar or Icons folder found next to this program (" + themesRoot + ").");
             foreach (Theme theme in ThemeStore.Load(themesRoot, kind))
             {
                 if (string.Equals(theme.FolderName, wanted, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(theme.Name, wanted, StringComparison.OrdinalIgnoreCase))
                     return theme;
             }
-            throw new InvalidOperationException("No " + (kind == ThemeKind.FileType ? "file type" : "toolbar") + " theme called \"" + wanted + "\".");
+            throw new InvalidOperationException("No " + ThemeLayout.Describe(kind) + " theme called \"" + wanted + "\".");
         }
 
         public static string DescribeError(Exception ex)
@@ -171,9 +178,9 @@ namespace SevenZipThemeManager
     internal sealed class Options
     {
         public string SevenZipFolder;
-        public string ThemesFolder;
         public string FileType;
         public string Toolbar;
+        public string Icons;
         public string ResultFile;
         public bool Restore;
         public bool Help;
@@ -193,9 +200,9 @@ namespace SevenZipThemeManager
                 switch (arg)
                 {
                     case "--7zip": options.SevenZipFolder = value.TrimEnd('\\'); break;
-                    case "--themes": options.ThemesFolder = value.TrimEnd('\\'); break;
                     case "--filetype": options.FileType = value; break;
                     case "--toolbar": options.Toolbar = value; break;
+                    case "--icons": options.Icons = value; break;
                     case "--result": options.ResultFile = value; break;
                     default: return "Unknown option " + args[i];
                 }
@@ -207,9 +214,9 @@ namespace SevenZipThemeManager
         {
             List<string> parts = new List<string>();
             AddPair(parts, "--7zip", SevenZipFolder);
-            AddPair(parts, "--themes", ThemesFolder);
             AddPair(parts, "--filetype", FileType);
             AddPair(parts, "--toolbar", Toolbar);
+            AddPair(parts, "--icons", Icons);
             AddPair(parts, "--result", ResultFile);
             if (Restore) parts.Add("--restore");
             return string.Join(" ", parts.ToArray());

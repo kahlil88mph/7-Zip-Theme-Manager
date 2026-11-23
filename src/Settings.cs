@@ -9,7 +9,7 @@ using System.Text;
 
 namespace SevenZipThemeManager
 {
-    // Remembers the chosen folders in %LOCALAPPDATA%\7-Zip Theme Manager\settings.ini
+    // Remembers the chosen 7-Zip folder in %LOCALAPPDATA%\7-Zip Theme Manager\settings.ini
     internal static class Settings
     {
         public static string DataFolder
@@ -23,7 +23,6 @@ namespace SevenZipThemeManager
         }
 
         public static string SevenZipFolder;
-        public static string ThemesFolder;
 
         public static void Load()
         {
@@ -39,7 +38,6 @@ namespace SevenZipThemeManager
                     string key = line.Substring(0, eq).Trim();
                     string value = line.Substring(eq + 1).Trim();
                     if (key == "SevenZipFolder") SevenZipFolder = value;
-                    else if (key == "ThemesFolder") ThemesFolder = value;
                 }
             }
             catch (IOException) { }
@@ -53,7 +51,6 @@ namespace SevenZipThemeManager
                 Directory.CreateDirectory(DataFolder);
                 List<string> lines = new List<string>();
                 lines.Add("SevenZipFolder=" + SevenZipFolder);
-                lines.Add("ThemesFolder=" + ThemesFolder);
                 File.WriteAllLines(FilePath, lines.ToArray(), Encoding.UTF8);
             }
             catch (IOException) { }

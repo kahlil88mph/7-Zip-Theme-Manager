@@ -41,7 +41,7 @@ namespace SevenZipThemeManager
             PatchFile(target, result, delegate(List<ResourceEntry> current, ResourceWriter writer, PatchResult r)
             {
                 BuildFileTypeChanges(current, theme, writer, r);
-            }, NativeMethods.RT_ICON, NativeMethods.RT_GROUP_ICON);
+            }, NativeMethods.RT_ICON, NativeMethods.RT_GROUP_ICON, NativeMethods.RT_STRING);
             NotifyShell();
             return result;
         }
@@ -57,28 +57,16 @@ namespace SevenZipThemeManager
             return result;
         }
 
-        private static void BuildFileTypeChanges(List<ResourceEntry> current, Theme theme, ResourceWriter writer, PatchResult result)
+        // Replaces the main icon of 7zFM.exe, 7zG.exe and the SFX modules that are present
+        public static PatchResult ApplyIcons(string sevenZipFolder, Theme theme)
         {
-            List<ResourceEntry> groups = new List<ResourceEntry>();
-            Dictionary<int, ushort> iconLanguages = new Dictionary<int, ushort>();
-            foreach (ResourceEntry entry in current)
+            PatchResult result = new PatchResult();
+            for (int i = 0; i < ThemeLayout.ProgramIcons.Length; i++)
             {
-                if (entry.Type == NativeMethods.RT_GROUP_ICON) groups.Add(entry);
-                else if (entry.Type == NativeMethods.RT_ICON && !entry.Name.IsString) iconLanguages[entry.Name.Id] = entry.Language;
-            }
-
-            // Work out which groups get replaced before touching any RT_ICON ids
-            Dictionary<ResourceEntry, List<IconImage>> replacements = new Dictionary<ResourceEntry, List<IconImage>>();
-            for (int slot = 0; slot < ThemeLayout.FileTypeSlots.Length; slot++)
-            {
-                string label = ThemeLayout.FileTypeSlots[slot][0];
-                ResourceEntry group = null;
-                foreach (ResourceEntry candidate in groups)
-                {
-                    if (candidate.Name.Matches(slot)) { group = candidate; break; }
-                }
-                string iconPath = theme.FindFileTypeIcon(slot);
-                if (group == null)
+                string label = ThemeLayout.ProgramIcons[i][1];
+                string target = Path.Combine(sevenZipFolder, label);
+                string iconPath = theme.FindProgramIcon(i);
+                if (!File.Exists(target))
                 {
                     if (iconPath != null) result.NotInSevenZip.Add(label);
                     continue;
@@ -88,7 +76,68 @@ namespace SevenZipThemeManager
                     result.NotInTheme.Add(label);
                     continue;
                 }
-                replacements[group] = IconFile.Load(iconPath);
+                PatchFile(target, result, delegate(List<ResourceEntry> current, ResourceWriter writer, PatchResult r)
+                {
+                    // The first icon group is the one Windows shows for the program
+                    ResourceEntry main = null;
+                    foreach (ResourceEntry entry in current)
+                    {
+                        if (entry.Type == NativeMethods.RT_GROUP_ICON) { main = entry; break; }
+                    }
+                    if (main == null)
+                    {
+                        r.NotInSevenZip.Add(label);
+                        return;
+                    }
+                    Dictionary<ResourceEntry, List<IconImage>> replacements = new Dictionary<ResourceEntry, List<IconImage>>();
+                    replacements[main] = IconFile.Load(iconPath);
+                    ReplaceIconGroups(current, replacements, writer, r, label);
+                }, NativeMethods.RT_ICON, NativeMethods.RT_GROUP_ICON);
+            }
+            NotifyShell();
+            return result;
+        }
+
+        private static void BuildFileTypeChanges(List<ResourceEntry> current, Theme theme, ResourceWriter writer, PatchResult result)
+        {
+            List<ResourceEntry> groups = new List<ResourceEntry>();
+            foreach (ResourceEntry entry in current)
+            {
+                if (entry.Type == NativeMethods.RT_GROUP_ICON) groups.Add(entry);
+            }
+
+            // The slots come from this 7z.dll, so the report matches what the window showed for the theme
+            FileTypeSupport support = FileTypeSupport.FromResources(current);
+            FileTypeCoverage coverage = support.Compare(theme);
+            result.NotInTheme.AddRange(coverage.Missing);
+            result.NotInSevenZip.AddRange(coverage.Extra);
+
+            // Work out which groups get replaced before touching any RT_ICON ids
+            Dictionary<ResourceEntry, List<IconImage>> replacements = new Dictionary<ResourceEntry, List<IconImage>>();
+            foreach (FileTypeSlot slot in support.Slots)
+            {
+                string iconPath = theme.FindFileTypeIcon(slot);
+                if (iconPath == null)
+                    continue;
+                foreach (ResourceEntry candidate in groups)
+                {
+                    if (candidate.Name.Matches(slot.Index)) { replacements[candidate] = IconFile.Load(iconPath); break; }
+                }
+            }
+            ReplaceIconGroups(current, replacements, writer, result, SevenZipInstall.IconLibrary);
+        }
+
+        // Writes new RT_ICON images and group data for each replaced group, reusing the ids of icons
+        // that no remaining group refers to and deleting the ones left over
+        private static void ReplaceIconGroups(List<ResourceEntry> current, Dictionary<ResourceEntry, List<IconImage>> replacements,
+            ResourceWriter writer, PatchResult result, string fileName)
+        {
+            List<ResourceEntry> groups = new List<ResourceEntry>();
+            Dictionary<int, ushort> iconLanguages = new Dictionary<int, ushort>();
+            foreach (ResourceEntry entry in current)
+            {
+                if (entry.Type == NativeMethods.RT_GROUP_ICON) groups.Add(entry);
+                else if (entry.Type == NativeMethods.RT_ICON && !entry.Name.IsString) iconLanguages[entry.Name.Id] = entry.Language;
             }
 
             // RT_ICON ids still referenced after the change must stay; the rest can be freed and reused
@@ -124,7 +173,7 @@ namespace SevenZipThemeManager
                 {
                     while (inUse.ContainsKey(nextId)) nextId++;
                     if (nextId > 0xFFFF)
-                        throw new InvalidOperationException("7z.dll has no free icon ids left");
+                        throw new InvalidOperationException(fileName + " has no free icon ids left");
                     inUse[nextId] = true;
                     newIds.Add(nextId);
                     freed.Remove(nextId);
@@ -274,7 +323,7 @@ namespace SevenZipThemeManager
         public static bool Exists(string sevenZipFolder)
         {
             string folder = Folder(sevenZipFolder);
-            return File.Exists(Path.Combine(folder, SevenZipInstall.IconLibrary)) || File.Exists(Path.Combine(folder, SevenZipInstall.FileManager));
+            return Directory.Exists(folder) && Directory.GetFiles(folder).Length > 0;
         }
 
         // Puts the saved files back; returns how many were restored
@@ -282,12 +331,11 @@ namespace SevenZipThemeManager
         {
             int restored = 0;
             string folder = Folder(sevenZipFolder);
-            foreach (string name in new string[] { SevenZipInstall.IconLibrary, SevenZipInstall.FileManager })
+            if (!Directory.Exists(folder))
+                return 0;
+            foreach (string copy in Directory.GetFiles(folder))
             {
-                string copy = Path.Combine(folder, name);
-                if (!File.Exists(copy))
-                    continue;
-                Patcher.ReplaceFile(copy, Path.Combine(sevenZipFolder, name));
+                Patcher.ReplaceFile(copy, Path.Combine(sevenZipFolder, Path.GetFileName(copy)));
                 restored++;
             }
             NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, 0, IntPtr.Zero, IntPtr.Zero);

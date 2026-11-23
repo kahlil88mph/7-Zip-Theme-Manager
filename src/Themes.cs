@@ -9,7 +9,7 @@ using System.Text;
 
 namespace SevenZipThemeManager
 {
-    internal enum ThemeKind { FileType, Toolbar }
+    internal enum ThemeKind { FileType, Toolbar, Icons }
 
     // Where each themed picture goes inside 7-Zip's files
     internal static class ThemeLayout
@@ -33,6 +33,25 @@ namespace SevenZipThemeManager
         public const int SmallToolbarFirstId = 150;
         public const string LargeToolbarFolder = "48x36";
         public const string SmallToolbarFolder = "24x24";
+
+        // Program icons (7zTM 3.5 "Icons" themes): icon file name, and the 7-Zip file whose main icon
+        // it replaces. 7zS.sfx and 7zS2.sfx come with the separate "7-Zip Extra" download.
+        public static readonly string[][] ProgramIcons = new string[][]
+        {
+            new string[] { "7zFM", "7zFM.exe" }, new string[] { "7zG", "7zG.exe" },
+            new string[] { "7zSFX", "7z.sfx" }, new string[] { "7zConSFX", "7zCon.sfx" },
+            new string[] { "7zSsfx", "7zS.sfx" }, new string[] { "7zS2sfx", "7zS2.sfx" },
+        };
+
+        public static string Describe(ThemeKind kind)
+        {
+            switch (kind)
+            {
+                case ThemeKind.FileType: return "file type";
+                case ThemeKind.Toolbar: return "toolbar";
+                default: return "program icon";
+            }
+        }
     }
 
     internal sealed class Theme
@@ -57,13 +76,29 @@ namespace SevenZipThemeManager
         // Path of the icon for a 7z.dll slot, or null when the theme has none
         public string FindFileTypeIcon(int slot)
         {
-            foreach (string name in ThemeLayout.FileTypeSlots[slot])
+            return FindIcon(ThemeLayout.FileTypeSlots[slot]);
+        }
+
+        public string FindFileTypeIcon(FileTypeSlot slot)
+        {
+            return FindIcon(slot.Names);
+        }
+
+        private string FindIcon(string[] names)
+        {
+            foreach (string name in names)
             {
                 string path = Path.Combine(Folder, name + ".ico");
                 if (File.Exists(path))
                     return path;
             }
             return null;
+        }
+
+        public string FindProgramIcon(int index)
+        {
+            string path = Path.Combine(Folder, ThemeLayout.ProgramIcons[index][0] + ".ico");
+            return File.Exists(path) ? path : null;
         }
 
         public string FindToolbarBitmap(string sizeFolder, string button)
@@ -77,29 +112,34 @@ namespace SevenZipThemeManager
     {
         public const string FileTypeFolder = "FileType";
         public const string ToolbarFolder = "ToolBar";
+        public const string IconsFolder = "Icons";
+
+        public static string FolderFor(ThemeKind kind)
+        {
+            switch (kind)
+            {
+                case ThemeKind.FileType: return FileTypeFolder;
+                case ThemeKind.Toolbar: return ToolbarFolder;
+                default: return IconsFolder;
+            }
+        }
 
         public static bool LooksLikeThemesRoot(string folder)
         {
-            return Directory.Exists(Path.Combine(folder, FileTypeFolder)) || Directory.Exists(Path.Combine(folder, ToolbarFolder));
+            return Directory.Exists(Path.Combine(folder, FileTypeFolder)) || Directory.Exists(Path.Combine(folder, ToolbarFolder))
+                || Directory.Exists(Path.Combine(folder, IconsFolder));
         }
 
-        // Looks next to the program and up to three folders above it
-        public static string FindThemesRoot(string startFolder)
+        // Portable: themes always live next to the program
+        public static string Root
         {
-            string folder = startFolder;
-            for (int i = 0; i < 4 && !string.IsNullOrEmpty(folder); i++)
-            {
-                if (LooksLikeThemesRoot(folder))
-                    return folder;
-                folder = Path.GetDirectoryName(folder);
-            }
-            return null;
+            get { return System.Windows.Forms.Application.StartupPath; }
         }
 
         public static List<Theme> Load(string root, ThemeKind kind)
         {
             List<Theme> themes = new List<Theme>();
-            string folder = Path.Combine(root, kind == ThemeKind.FileType ? FileTypeFolder : ToolbarFolder);
+            string folder = Path.Combine(root, FolderFor(kind));
             if (!Directory.Exists(folder))
                 return themes;
 
@@ -127,7 +167,9 @@ namespace SevenZipThemeManager
             if (ini.TryGetValue("licence", out value) || ini.TryGetValue("license", out value)) theme.Licence = value;
             if (ini.TryGetValue("website", out value)) theme.Website = value;
 
-            foreach (string preview in new string[] { "preview.jpg", "preview.png" })
+            // preview.png is lossless and wins; preview.jpg is what 7zTM reads, so older themes keep working
+            // and a theme can ship both to stay usable in 7zTM
+            foreach (string preview in new string[] { "preview.png", "preview.jpg" })
             {
                 if (File.Exists(Path.Combine(dir, preview)))
                 {
@@ -138,10 +180,15 @@ namespace SevenZipThemeManager
 
             if (kind == ThemeKind.FileType)
             {
-                for (int slot = 0; slot < ThemeLayout.FileTypeSlots.Length; slot++)
+                // Missing and extra icons depend on the 7-Zip in use; FileTypeSupport.Compare works them out
+                theme.Found = Directory.GetFiles(dir, "*.ico").Length;
+            }
+            else if (kind == ThemeKind.Icons)
+            {
+                for (int i = 0; i < ThemeLayout.ProgramIcons.Length; i++)
                 {
-                    if (theme.FindFileTypeIcon(slot) != null) theme.Found++;
-                    else theme.Missing.Add(ThemeLayout.FileTypeSlots[slot][0] + ".ico");
+                    if (theme.FindProgramIcon(i) != null) theme.Found++;
+                    else theme.Missing.Add(ThemeLayout.ProgramIcons[i][0] + ".ico");
                 }
             }
             else
